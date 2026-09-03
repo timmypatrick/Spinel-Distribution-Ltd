@@ -1,0 +1,8 @@
+{
+  "name": "Spinel Distribution Ltd",
+  "description": "Enterprise-grade international e-commerce platform",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
