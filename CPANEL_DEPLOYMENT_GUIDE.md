@@ -1,0 +1,165 @@
+# Spinel Distribution - Zero-Install cPanel Production Deployment Guide
+
+This application is **100% pre-compiled and bundled for production**.
+- **NO `npm install` needed on cPanel**
+- **NO `npm run build` needed on cPanel**
+- **Single Process Execution**: Uses **only 1 Node.js process** and **~35MB RAM**, avoiding cPanel's *Entry Processes* (EP) and *Number of Processes* (NPROC) limits.
+
+---
+
+## 1. Connecting cPanel MySQL Database for "Request Quote"
+
+When visitors submit a quote on the **Request Quote** page, it persists directly to your cPanel MySQL/MariaDB database in the **`Request_Quote`** table.
+
+### Step A: Create MySQL Database in cPanel
+1. In cPanel, open **MySQL Databases**.
+2. Create a new database (e.g., `spinel_db`). Note full name: `yourcpaneluser_spinel_db`.
+3. Create a new user (e.g., `spinel_user`) and a secure password.
+4. Under **Add User To Database**, select the user and database, click **Add**, check **ALL PRIVILEGES**, and click **Make Changes**.
+
+*(Note: Both the `Request_Quote` and `Users` tables are **created and verified automatically** by the app on boot. You can also import `cpanel_quotes_table.sql` and `cpanel_users_table.sql` in phpMyAdmin if preferred).*
+
+### Step B: Add Credentials to cPanel Node.js App
+In cPanel &rarr; **Setup Node.js App**, edit your application, scroll to **Environment variables**, and add:
+
+| Variable Name | Recommended Value | Note |
+|---|---|---|
+| **`DB_HOST`** | `127.0.0.1` | **Always use `127.0.0.1`** (avoids socket mismatch) |
+| **`DB_USER`** | `yourcpaneluser_dbuser` | Full cPanel database username |
+| **`DB_PASSWORD`** | `your_secure_password` | Database user password |
+| **`DB_NAME`** | `yourcpaneluser_dbname` | Full cPanel database name |
+| **`DB_PORT`** | `3306` | Default MySQL port |
+| **`SMTP_HOST`** | `mail.yourdomain.com` *(Optional)* | cPanel Mail Server hostname |
+| **`SMTP_PORT`** | `587` (or `465`) *(Optional)* | Outgoing Mail Port |
+| **`SMTP_USER`** | `noreply@yourdomain.com` *(Optional)* | Full cPanel Webmail email address |
+| **`SMTP_PASS`** | `your_webmail_password` *(Optional)* | Webmail email account password |
+
+*(Alternatively, you can place a `.env` file containing these variables in your `public_html/` folder).*
+
+---
+
+## 2. Customer Authentication & "Users" Database Table
+
+1. **Table Structure (`Users`)**:
+   - `ID` (INT AUTO_INCREMENT PRIMARY KEY)
+   - `Full_Name` (VARCHAR(255))
+   - `Email` (VARCHAR(255) UNIQUE) — Prevents duplicate registrations.
+   - `Password` (VARCHAR(255)) — **Hashed with bcryptjs** for high enterprise security.
+   - `Verification_Status` (VARCHAR(50), default `'Pending'`)
+   - `OTP_Code` (VARCHAR(10)) — Persists the 6-digit OTP in MySQL across all cPanel worker processes.
+   - `OTP_Expiry` (DATETIME) — Expiration timestamp for the code.
+   - `Created_At` (DATETIME DEFAULT CURRENT_TIMESTAMP)
+
+2. **Easy Configuration via `db_config.json`**:
+   Because cPanel File Manager hides files starting with a dot (`.env`), you can directly open and edit `db_config.json` in your cPanel file manager:
+   ```json
+   {
+     "DB_HOST": "127.0.0.1",
+     "DB_USER": "your_cpanel_dbuser",
+     "DB_PASSWORD": "your_cpanel_dbpassword",
+     "DB_NAME": "your_cpanel_dbname",
+     "DB_PORT": 3306,
+     "SMTP_HOST": "mail.yourdomain.com",
+     "SMTP_PORT": 465,
+     "SMTP_USER": "info@yourdomain.com",
+     "SMTP_PASSWORD": "your_email_password",
+     "SMTP_FROM": "\"Spinel Distribution\" <info@yourdomain.com>"
+   }
+   ```
+
+3. **How to create or update this table in phpMyAdmin**:
+   - If creating fresh: import `cpanel_users_table.sql`.
+   - If you already created the table, run:
+     ```sql
+     -- 1. Remove old Role column if it exists:
+     ALTER TABLE `Users` DROP COLUMN IF EXISTS `Role`;
+
+     -- 2. Ensure Verification_Status has DEFAULT 'Pending':
+     ALTER TABLE `Users` ADD COLUMN IF NOT EXISTS `Verification_Status` VARCHAR(50) DEFAULT 'Pending';
+     ALTER TABLE `Users` ALTER COLUMN `Verification_Status` SET DEFAULT 'Pending';
+
+     -- 3. Add OTP persistence columns:
+     ALTER TABLE `Users` ADD COLUMN IF NOT EXISTS `OTP_Code` VARCHAR(10) NULL;
+     ALTER TABLE `Users` ADD COLUMN IF NOT EXISTS `OTP_Expiry` DATETIME NULL;
+     ```
+
+4. **6-Digit Email OTP Verification & Multi-Worker Architecture**:
+   - When a user submits the signup form, their record is recorded in the `Users` table as `Pending` with their active `OTP_Code`.
+   - An email with the 6-digit code is dispatched via cPanel Exim (`/usr/sbin/sendmail`) or SMTP.
+   - When the user inputs the 6 digits on the OTP screen, the database record is updated to `Verification_Status = 'Verified'`.
+   - Even if cPanel Passenger switches worker processes, the OTP verification succeeds because the code is verified directly in MySQL.
+   - You can test your connection at any time by visiting `https://yourdomain.com/api/system/health`.
+
+---
+
+## 3. Picture File Storage on cPanel (`Images/Request_Quotes/`)
+
+When users attach an image, blueprint, or equipment photo on the **Request Quote** page:
+1. **Physical File Saved on Disk**: The binary image is saved directly onto your cPanel server inside the app root at:
+   ```
+   Images/Request_Quotes/quote_<timestamp>_<random>.jpg
+   ```
+2. **Database Table Column**: The `Image` column in the **`Request_Quote`** table stores the exact web path:
+   ```sql
+   /Images/Request_Quotes/quote_1790848319727_8359.jpg
+   ```
+3. **Instant Web Delivery**: Images are served directly via Apache/LiteSpeed & Express at `https://yourdomain.com/Images/Request_Quotes/...` with HTTP caching enabled.
+4. **Zero Configuration**: The server automatically creates the `Images/Request_Quotes` folder in the app root directory on first boot.
+
+---
+
+## 3. Fixing "Upgrade Required" (HTTP 426) on cPanel
+
+If your browser displays **"Upgrade Required"**:
+1. **Visit via HTTPS**: Always use **`https://yourdomain.com`** (not `http://`).
+2. **Node.js Version**: In cPanel &rarr; **Setup Node.js App**, ensure the version is set to **`20.x`** (or `18.x` / `22.x`), then click **Save** and **Restart**.
+
+---
+
+## 4. Files to Upload to cPanel (0 Installs Required)
+
+Upload these files directly into your domain root (e.g. `public_html/`):
+
+| File / Folder | Purpose |
+|---|---|
+| **`app.js`** | Standalone production server (Express + MySQL2 + API routes bundled). |
+| **`server.cjs`** | Identical backup server bundle. |
+| **`client-build/`** *(or `dist/`)* | Pre-compiled React frontend (storefront, admin portal, CSS, images). |
+| **`Images/Request_Quotes/`** | Directory in app root where quote picture attachments are saved. |
+| **`.htaccess`** | HTTPS redirection & Passenger config. |
+| **`package.json`** | Metadata required by cPanel "Setup Node.js App". |
+| **`.env`** *(Optional)* | Database & environment variables. |
+
+*(Do **not** upload `node_modules/` or `src/` to cPanel).*
+
+---
+
+## 5. Quick Setup Summary
+
+1. Upload `app.js`, `client-build/` (or `dist/`), `.htaccess`, and `package.json` to `public_html` (or extract `cpanel-deploy.zip` directly into `public_html`).
+2. In cPanel **Setup Node.js App**:
+   - **Node.js version**: `20.x` (or `18.x` / `22.x`)
+   - **Application mode**: `Production`
+   - **Application root**: `public_html`
+   - **Application startup file**: `app.js`
+   - **Environment variables**: Add `DB_HOST=127.0.0.1`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
+3. Click **Save** and **Restart**.
+
+---
+
+## 6. How Live Updates Reflect Immediately on cPanel
+
+If you upload updated files and the live site still shows older content, here is why that happened and how it is solved:
+
+1. **Pre-Compiled Bundles (`app.js` & `client-build/`)**:
+   - Because cPanel runs without build tools, the GitHub repository contains pre-compiled bundles (`app.js` and `client-build/`).
+   - Every time code changes are made, the production bundles are freshly compiled so that downloading or syncing from GitHub delivers the latest version.
+2. **Automatic Process Reload (Phusion Passenger)**:
+   - When you upload or replace files on cPanel, Phusion Passenger keeps the old Node process in server memory until it is reloaded.
+   - The server includes an auto-reload watcher: when it detects that `app.js`, `client-build/index.html`, or `tmp/restart.txt` has been modified, it automatically reloads the worker process with zero downtime.
+   - You can also instantly trigger a reload by:
+     - Clicking **"Restart"** in cPanel &rarr; **Setup Node.js App**.
+     - Or visiting `https://yourdomain.com/api/system/restart` in your browser.
+3. **Cache-Control & LiteSpeed Bypass**:
+   - `.htaccess` and `index.html` include `X-LiteSpeed-Cache-Control: no-cache` and strict `Cache-Control: no-store, no-cache, must-revalidate` headers. This prevents browsers and cPanel LiteSpeed server caches from serving stale cached HTML.
+

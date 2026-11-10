@@ -1,8 +1,6 @@
 {
-  "name": "Spinel Distribution Ltd",
-  "description": "Enterprise-grade international e-commerce platform",
+  "name": "SPINEL DISTRIBUTION",
+  "description": "International enterprise e-commerce platform for video surveillance, access control, networking, telecommunications, and renewable energy.",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
